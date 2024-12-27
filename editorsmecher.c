@@ -1,6 +1,10 @@
 
 //includes
 
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <unistd.h>
 #include <termios.h>
 #include <stdlib.h>
@@ -9,12 +13,14 @@
 #include <errno.h>
 #include <sys/ioctl.h>
 #include <string.h>
+#include <sys/types.h>
 
 //defines
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define ABUF_INIT {NULL, 0}
 #define EDITOR_VERSION "0.0.1"
+
 
 enum editorKey{
 	ARROW_LEFT = 1000,
@@ -29,11 +35,20 @@ enum editorKey{
 };
 
 //data
+
+typedef struct erow {
+	int size;
+	char* chars;
+} erow;
+
 struct editorConfig{
 	int cx;
 	int cy;
+	int rowoff;
 	int screenrows;
 	int screencols;
+	int numrows;
+	erow* row;
 	struct termios orig_termios;
 };
 
@@ -172,6 +187,49 @@ int getWindowSize(int* rows, int* cols){
 	}
 }
 
+
+
+// operations with rows
+
+void editorAppendRow(char* s, size_t len){
+	Edit.row = realloc(Edit.row, sizeof(erow) * (Edit.numrows + 1));
+
+	int at = Edit.numrows;
+	Edit.row[at].size = len;
+	Edit.row[at].chars = malloc(len + 1);
+	memcpy(Edit.row[at].chars, s, len);
+	Edit.row[at].chars[len] = '\0';
+	Edit.numrows++;
+}
+
+
+
+// file I/O
+
+void editorOpen(char* filename){
+
+	FILE* fd = fopen(filename, "r");
+	if (!fd)
+		die("fopen");
+
+	char *line = NULL;
+	size_t linecap = 0;
+	ssize_t linelen;
+
+	while((linelen = getline(&line, &linecap, fd)) != -1){
+		while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r'))
+			linelen--;
+		editorAppendRow(line, linelen);
+	
+	}
+	free(line);
+	fclose(fd);
+
+	
+}
+
+
+
 //append buffer
 
 struct abuf {
@@ -197,29 +255,49 @@ void abFree(struct abuf* ab){
 
 
 //output
+
+void editorScroll(){
+	if (Edit.cy < Edit.rowoff)
+		Edit.rowoff = Edit.cy;
+
+	if (Edit.cy >= Edit.rowoff + Edit.screenrows)
+		Edit.rowoff = Edit.cy - Edit.screenrows + 1;
+}
+
 void editorDrawRows(struct abuf* ab){
 	int i;
 	for (i = 0; i < Edit.screenrows; i++){
-		if (i == Edit.screenrows / 3){
-			char welcome[100];
-			int welcomelen = snprintf(welcome, sizeof(welcome),
-			"Cocsmin editor -- version %s", EDITOR_VERSION);
-			if (welcomelen > Edit.screencols)
-				welcomelen = Edit.screencols;
+		int filerow = i + Edit.rowoff;
+		if (filerow >= Edit.numrows){
+			if (Edit.numrows == 0 && i == Edit.screenrows / 3){
+				char welcome[100];
+				int welcomelen = snprintf(welcome, sizeof(welcome),
+				"Cocsmin editor -- version %s", EDITOR_VERSION);
+				if (welcomelen > Edit.screencols)
+					welcomelen = Edit.screencols;
 
-			int padding = (Edit.screencols - welcomelen) / 2;
-			if (padding){
-				abAppend(ab, "~", 1);
-				padding--;
+				int padding = (Edit.screencols - welcomelen) / 2;
+				if (padding){
+					abAppend(ab, "~", 1);
+					padding--;
+				}
+				while (padding--)
+					abAppend(ab, " ", 1);
+					
+				abAppend(ab, welcome, welcomelen);
 			}
-			while (padding--)
-				abAppend(ab, " ", 1);
-				
-			abAppend(ab, welcome, welcomelen);
+			else{	
+				abAppend(ab, "~", 1);
+			}
 		}
-		else{	
-			abAppend(ab, "~", 1);
+		else{
+			int len = Edit.row[filerow].size;
+			if (len > Edit.screencols)
+				len = Edit.screencols;
+			abAppend(ab, Edit.row[filerow].chars, len);
 		}
+
+		
 		abAppend(ab, "\x1b[K", 3);
 
 		if (i < Edit.screenrows - 1){
@@ -229,6 +307,8 @@ void editorDrawRows(struct abuf* ab){
 }
 
 void editorRefreshScreen(){
+
+	editorScroll();
 
 	struct abuf ab = ABUF_INIT;
 
@@ -266,7 +346,7 @@ void editorMoveCursor(int key){
 				Edit.cy--;
 			break;
 		case ARROW_DOWN:
-			if (Edit.cy != Edit.screenrows - 1)
+			if (Edit.cy < Edit.numrows)
 				Edit.cy++;
 			break;
 	}
@@ -314,14 +394,21 @@ void editorProcessKeypress(){
 void initEditor(){
 	Edit.cx = 0;
 	Edit.cy = 0;
+	Edit.rowoff = 0;
+	Edit.numrows = 0;
+	Edit.row = NULL;
 
+	
 	if (getWindowSize(&Edit.screenrows, &Edit.screencols) == -1)
 		die("getWindowSize");
 }
 
-int main(){
+int main(int argc, char* argv[]){
 	enableRaw();
 	initEditor();
+	if (argc >= 2)
+		editorOpen(argv[1]);
+	
 	while (1){
 		editorRefreshScreen();
 		editorProcessKeypress();
