@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <stdarg.h>
+#include <fcntl.h>
 
 //defines
 
@@ -26,6 +27,7 @@
 
 
 enum editorKey{
+	BACKSPACE = 127,
 	ARROW_LEFT = 1000,
 	ARROW_RIGHT,
 	ARROW_UP,
@@ -56,11 +58,14 @@ struct editorConfig{
 	int screencols;
 	int numrows;
 	erow* row;
+	int differ;
 	char* filename;
 	char statusmsg[80];
 	time_t statusmsg_time;
 	struct termios orig_termios;
 };
+
+void editorSetStatusMessage(const char* fmt, ...);
 
 struct editorConfig Edit;
 
@@ -247,6 +252,7 @@ void editorAppendRow(char* s, size_t len){
 	editorUpdateRow(&Edit.row[at]);
 	
 	Edit.numrows++;
+	Edit.differ++;
 }
 
 void editorRowInsertChar(erow* row, int at, int c){
@@ -257,6 +263,7 @@ void editorRowInsertChar(erow* row, int at, int c){
 	row->size++;
 	row->chars[at] = c;
 	editorUpdateRow(row);
+	Edit.differ++;
 }
 
 //editor operations
@@ -293,9 +300,53 @@ void editorOpen(char* filename){
 	}
 	free(line);
 	fclose(fd);
-
+	Edit.differ = 0;
 	
 }
+
+char* editorRowsToString(int* buflen){
+	int totlen = 0;
+	for (int j = 0; j < Edit.numrows; j++)
+		totlen += Edit.row[j].size + 1;
+	*buflen = totlen;
+
+	char* buf = malloc(totlen);
+	char* p = buf;
+	for (int j = 0; j < Edit.numrows; j++){
+		memcpy(p, Edit.row[j].chars, Edit.row[j].size);
+		p += Edit.row[j].size;
+		*p = '\n';
+		p++;
+	}
+
+	return buf;
+}
+
+
+void editorSave(){
+	if (Edit.filename == NULL)
+		return;
+
+	int len;
+	char* buf = editorRowsToString(&len);
+
+	int fd = open(Edit.filename, O_RDWR | O_CREAT, 0644);
+	if (fd != -1){
+		if (ftruncate(fd, len) != -1){
+			if (write(fd, buf, len) == len){
+				close(fd);
+				free(buf);
+				Edit.differ = 0;
+				editorSetStatusMessage("%d bytes written to disk", len);
+				return;
+			}
+		}
+		close(fd);
+	}
+	free(buf);
+	editorSetStatusMessage("Can't save!! I/O error: %s", strerror(errno));
+}
+
 
 
 
@@ -345,8 +396,9 @@ void editorSetStatusMessage(const char* fmt, ...){
 void editorDrawStatusBar(struct abuf* ab){
 	abAppend(ab, "\x1b[7m", 4);
 	char status[80], rstatus[80];
-	int len = snprintf(status, sizeof(status), "%.20s - %d lines", 
-	Edit.filename ? Edit.filename : "[No Name]", Edit.numrows);
+	int len = snprintf(status, sizeof(status), "%.20s - %d lines %s", 
+	Edit.filename ? Edit.filename : "[No Name]", Edit.numrows,
+	Edit.differ ? "(modified)" : "");
 	int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", Edit.cy + 1, Edit.numrows);
 	if (len > Edit.screencols) 
 		len = Edit.screencols;
@@ -495,10 +547,19 @@ void editorProcessKeypress(){
 	int c = editorReadKey();
 
 	switch(c){
+
+		case '\r':
+			//TODO
+			break;
+	
 		case CTRL_KEY('q'):
 			write(STDOUT_FILENO, "\x1b[2j", 4);
 			write(STDOUT_FILENO, "\x1b[H", 3);
 			exit(0);
+			break;
+
+		case CTRL_KEY('s'):
+			editorSave();
 			break;
 
 		case HOME_KEY:
@@ -508,6 +569,12 @@ void editorProcessKeypress(){
 		case END_KEY:
 			if (Edit.cy < Edit.numrows)
 				Edit.cx = Edit.row[Edit.cy].size;
+			break;
+
+		case BACKSPACE:
+		case CTRL_KEY('h'):
+		case DEL_KEY:
+			//TODO
 			break;
 
 		case PAGE_UP:
@@ -534,6 +601,10 @@ void editorProcessKeypress(){
 			editorMoveCursor(c);
 			break;
 
+		case CTRL_KEY('l'):
+		case '\x1b':
+			break;
+
 		default:
 			editorInsertChar(c);
 			break;
@@ -551,6 +622,7 @@ void initEditor(){
 	Edit.coloff = 0;
 	Edit.numrows = 0;
 	Edit.row = NULL;
+	Edit.differ = 0;
 	Edit.filename = NULL;
 	Edit.statusmsg[0] = '\0';
 	Edit.statusmsg_time = 0;
@@ -567,7 +639,7 @@ int main(int argc, char* argv[]){
 	if (argc >= 2)
 		editorOpen(argv[1]);
 
-	editorSetStatusMessage("HELP: Ctrl+Q = quit");
+	editorSetStatusMessage("HELP: Ctrl+Q = quit | Ctrl+S = save");
 	
 	while (1){
 		editorRefreshScreen();
