@@ -45,6 +45,7 @@ struct editorConfig{
 	int cx;
 	int cy;
 	int rowoff;
+	int coloff;
 	int screenrows;
 	int screencols;
 	int numrows;
@@ -262,6 +263,12 @@ void editorScroll(){
 
 	if (Edit.cy >= Edit.rowoff + Edit.screenrows)
 		Edit.rowoff = Edit.cy - Edit.screenrows + 1;
+
+	if (Edit.cx < Edit.coloff)
+		Edit.coloff = Edit.cx;
+
+	if (Edit.cx >= Edit.coloff + Edit.screencols)
+		Edit.coloff = Edit.cx - Edit.screencols + 1;
 }
 
 void editorDrawRows(struct abuf* ab){
@@ -291,10 +298,12 @@ void editorDrawRows(struct abuf* ab){
 			}
 		}
 		else{
-			int len = Edit.row[filerow].size;
+			int len = Edit.row[filerow].size - Edit.coloff;
+			if (len < 0)
+				len = 0;
 			if (len > Edit.screencols)
 				len = Edit.screencols;
-			abAppend(ab, Edit.row[filerow].chars, len);
+			abAppend(ab, &Edit.row[filerow].chars[Edit.coloff], len);
 		}
 
 		
@@ -318,7 +327,7 @@ void editorRefreshScreen(){
 	editorDrawRows(&ab);
 
 	char buf[32];
-	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", Edit.cy + 1, Edit.cx + 1);
+	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (Edit.cy - Edit.rowoff) + 1, (Edit.cx - Edit.coloff) + 1);
 	abAppend(&ab, buf, strlen(buf));
 
 	abAppend(&ab, "\x1b[?25h", 6);
@@ -332,14 +341,25 @@ void editorRefreshScreen(){
 //input
 
 void editorMoveCursor(int key){
+
+	erow *row = (Edit.cy >= Edit.numrows) ? NULL : &Edit.row[Edit.cy];
+
 	switch (key){
 		case ARROW_LEFT:
 			if (Edit.cx != 0)
 				Edit.cx--;
+			else if (Edit.cy > 0){
+				Edit.cy--;
+				Edit.cx = Edit.row[Edit.cy].size;
+			}
 			break;
 		case ARROW_RIGHT:
-			if (Edit.cx != Edit.screencols - 1)
+			if (row && Edit.cx < row->size)
 				Edit.cx++;
+			else if (row && Edit.cx == row->size){
+				Edit.cy++;
+				Edit.cx = 0;
+			}
 			break;
 		case ARROW_UP:
 			if (Edit.cy != 0)
@@ -350,6 +370,11 @@ void editorMoveCursor(int key){
 				Edit.cy++;
 			break;
 	}
+
+	row = (Edit.cy >= Edit.numrows) ? NULL : &Edit.row[Edit.cy];
+	int rowlen = row ? row->size : 0;
+	if (Edit.cx > rowlen)
+		Edit.cx = rowlen;
 }
 
 void editorProcessKeypress(){
@@ -395,6 +420,7 @@ void initEditor(){
 	Edit.cx = 0;
 	Edit.cy = 0;
 	Edit.rowoff = 0;
+	Edit.coloff = 0;
 	Edit.numrows = 0;
 	Edit.row = NULL;
 
