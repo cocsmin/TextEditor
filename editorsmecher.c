@@ -1,10 +1,6 @@
 
 //includes
 
-#define _DEFAULT_SOURCE
-#define _BSD_SOURCE
-#define _GNU_SOURCE
-
 #include <unistd.h>
 #include <termios.h>
 #include <stdlib.h>
@@ -18,6 +14,10 @@
 #include <stdarg.h>
 
 //defines
+
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define ABUF_INIT {NULL, 0}
@@ -249,6 +249,25 @@ void editorAppendRow(char* s, size_t len){
 	Edit.numrows++;
 }
 
+void editorRowInsertChar(erow* row, int at, int c){
+	if (at < 0 || at > row->size)
+		at = row->size;
+	row->chars = realloc(row->chars, row->size + 2);
+	memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
+	row->size++;
+	row->chars[at] = c;
+	editorUpdateRow(row);
+}
+
+//editor operations
+
+void editorInsertChar(int c){
+	if (Edit.cy == Edit.numrows)
+		editorAppendRow("", 0);
+
+	editorRowInsertChar(&Edit.row[Edit.cy], Edit.cx, c);
+	Edit.cx++;
+}
 
 
 // file I/O
@@ -513,6 +532,10 @@ void editorProcessKeypress(){
 		case ARROW_LEFT:
 		case ARROW_RIGHT:
 			editorMoveCursor(c);
+			break;
+
+		default:
+			editorInsertChar(c);
 			break;
 	}
 	//printf("%c\r\n", c);
