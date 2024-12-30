@@ -394,7 +394,10 @@ char* editorRowsToString(int* buflen){
 void editorSave(){
 	if (Edit.filename == NULL){
 		Edit.filename = editorPrompt("Save as: %s (ESC to cancel)");
-		//TODO	
+		if (Edit.filename == NULL){
+			editorSetStatusMessage("Save canceled");
+			return;
+		}
 	}
 	int len;
 	char* buf = editorRowsToString(&len);
@@ -417,7 +420,15 @@ void editorSave(){
 }
 
 
+//find
 
+void editorFind(){
+	char* query = editorPrompt("Search: %s (ESC to cancel)");
+	if (query == NULL)
+		return;
+
+	//TODO
+}
 
 //append buffer
 
@@ -587,7 +598,11 @@ char* editorPrompt(char* prompt){
 		editorRefreshScreen();
 
 		int c = editorReadKey();
-		if (c == '\x1b'){
+		if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE){
+			if (buflen != 0)
+				buf[--buflen] = '\0';
+		}
+		else if (c == '\x1b'){
 			editorSetStatusMessage("");
 			free(buf);
 			return NULL;
